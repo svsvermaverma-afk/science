@@ -1,16 +1,16 @@
-import sqlite3
 import pandas as pd
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 
-# Mobile viewport optimization
+# Mobile-First Viewport Config
 st.set_page_config(
-    page_title="Science Model Scoring",
+    page_title="ABIC Science Model Evaluation",
     page_icon="🔬",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
 
-# Custom Mobile Styling
+# Custom Styling for Mobile UI
 st.markdown(
     """
     <style>
@@ -25,7 +25,7 @@ st.markdown(
         .model-card {
             background-color: #f1f5f9;
             border-left: 5px solid #2563eb;
-            padding: 10px;
+            padding: 12px;
             border-radius: 8px;
             margin-bottom: 12px;
             color: #0f172a;
@@ -34,9 +34,9 @@ st.markdown(
             background: #ffffff;
             border: 1px solid #e2e8f0;
             border-left: 5px solid #f59e0b;
-            padding: 10px;
+            padding: 12px;
             border-radius: 8px;
-            margin-bottom: 8px;
+            margin-bottom: 10px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
     </style>
@@ -44,25 +44,43 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ----------------- स्थायी SQLite डेटाबेस -----------------
-conn = sqlite3.connect("permanent_science_data.db", check_same_thread=False)
-c = conn.cursor()
-c.execute("""
-CREATE TABLE IF NOT EXISTS marks (
-    model_id INTEGER,
-    judge_name TEXT,
-    crit1 REAL,
-    crit2 REAL,
-    crit3 REAL,
-    total REAL,
-    remarks TEXT,
-    PRIMARY KEY (model_id, judge_name)
-)
-""")
-conn.commit()
+# ----------------- Google Sheets कनेक्शन -----------------
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# ----------------- 35 मॉडल्स का डेटा (Group: Junior / Senior) -----------------
-DATA = [
+
+def get_marks_data():
+  try:
+    df = conn.read(ttl=0)
+    if df is None or df.empty:
+      return pd.DataFrame(
+          columns=[
+              "model_id",
+              "judge_name",
+              "crit1",
+              "crit2",
+              "crit3",
+              "total",
+              "remarks",
+          ]
+      )
+    df["model_id"] = pd.to_numeric(df["model_id"], errors="coerce").fillna(0).astype(int)
+    return df
+  except Exception:
+    return pd.DataFrame(
+        columns=[
+            "model_id",
+            "judge_name",
+            "crit1",
+            "crit2",
+            "crit3",
+            "total",
+            "remarks",
+        ]
+    )
+
+
+# ----------------- प्रतियोगिता के 35 मॉडल्स (मास्टर डेटा) -----------------
+MODELS = [
     {
         "id": 1,
         "class": "6 A",
@@ -392,22 +410,24 @@ DATA = [
     },
 ]
 
-df_base = pd.DataFrame(DATA)
+df_base = pd.DataFrame(MODELS)
 
-# ----------------- मेनू -----------------
+# ----------------- UI Header -----------------
 st.markdown("### 🔬 विज्ञान मॉडल मूल्यांकन")
 menu = st.radio(
     "",
-    ["📝 मार्किंग फीड करें", "🏆 Top 3 रैंक (Junior/Senior)", "🗑️ डेटा सुधार / डिलीट"],
+    ["📝 मार्किंग फीड करें", "🏆 Top 3 परिणाम (45 में से)", "🗑️ सुधार / डिलीट"],
     horizontal=True,
     label_visibility="collapsed",
 )
+
+df_marks = get_marks_data()
 
 # ----------------- 1. मार्किंग स्क्रीन -----------------
 if menu == "📝 मार्किंग फीड करें":
   judge = st.selectbox(
       "👤 निर्णायक शिक्षक (Judge):",
-      ["Shri S.K. Nayak", "Shri B.N.R. Tripathi", "Shri S.N. Singh"],
+      ["Shree S.K. Nayak", "Shri B.N.R. Tripathi", "Shri S.N. Singh"],
   )
 
   class_list = ["सभी कक्षाएं (All)"] + sorted(list(df_base["class"].unique()))
@@ -416,45 +436,58 @@ if menu == "📝 मार्किंग फीड करें":
   f_df = (
       df_base if sel_class == "सभी कक्षाएं (All)" else df_base[df_base["class"] == sel_class]
   )
-
   model_opts = {
       f"#{r['id']} ({r['class']}) - {r['name']}": r["id"]
       for _, r in f_df.iterrows()
   }
 
   if not model_opts:
-    st.warning("कोई मॉडल उपलब्ध नहीं है।")
+    st.warning("कोई मॉडल नहीं मिला।")
   else:
     chosen_label = st.selectbox("📦 मॉडल चुनें:", list(model_opts.keys()))
     m_id = model_opts[chosen_label]
     row = df_base[df_base["id"] == m_id].iloc[0]
 
+    # Mobile Card Display
     st.markdown(
         f"""
         <div class="model-card">
-            <div style="font-size: 1.05rem; font-weight: bold;">{row['name']}</div>
-            <div style="font-size: 0.85rem; color: #475569;">
-                वर्ग: <b>{row['group']}</b> | कक्षा: <b>{row['class']}</b>
-            </div>
+            <div style="font-size: 1.1rem; font-weight: bold;">{row['name']}</div>
+            <div style="font-size: 0.85rem; color: #475569;">वर्ग: <b>{row['group']}</b> | कक्षा: <b>{row['class']}</b></div>
             <div style="font-size: 0.85rem; margin-top: 5px;">👥 <b>विद्यार्थी:</b> {row['students']}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # पहले का डेटा लोड
-    c.execute(
-        "SELECT crit1, crit2, crit3, remarks FROM marks WHERE model_id=? AND"
-        " judge_name=?",
-        (m_id, judge),
+    # Google Sheet से पहले से भरे अंक लोड करना
+    existing = df_marks[
+        (df_marks["model_id"] == m_id) & (df_marks["judge_name"] == judge)
+    ]
+    v1 = (
+        float(existing.iloc[0]["crit1"])
+        if not existing.empty and pd.notna(existing.iloc[0]["crit1"])
+        else 0.0
     )
-    prev = c.fetchone()
-    v1 = float(prev[0]) if prev else 0.0
-    v2 = float(prev[1]) if prev else 0.0
-    v3 = float(prev[2]) if prev else 0.0
-    v_rem = prev[3] if prev else ""
+    v2 = (
+        float(existing.iloc[0]["crit2"])
+        if not existing.empty and pd.notna(existing.iloc[0]["crit2"])
+        else 0.0
+    )
+    v3 = (
+        float(existing.iloc[0]["crit3"])
+        if not existing.empty and pd.notna(existing.iloc[0]["crit3"])
+        else 0.0
+    )
+    v_rem = (
+        str(existing.iloc[0]["remarks"])
+        if not existing.empty and pd.notna(existing.iloc[0]["remarks"])
+        else ""
+    )
+    if v_rem == "nan":
+      v_rem = ""
 
-    st.markdown("**🎯 अंक दर्ज करें (कुल 15 में से):**")
+    st.markdown("**🎯 अंक दर्ज करें (3 श्रेणियां × 5 = कुल 15 अंक):**")
     s1 = st.slider(
         "1. नवाचार / Creativity (Max 5)",
         0.0,
@@ -464,7 +497,7 @@ if menu == "📝 मार्किंग फीड करें":
         key=f"sl1_{m_id}_{judge}",
     )
     s2 = st.slider(
-        "2. सिद्धांत / Working (Max 5)",
+        "2. सिद्धांत व वर्किंग / Working (Max 5)",
         0.0,
         5.0,
         v2,
@@ -472,7 +505,7 @@ if menu == "📝 मार्किंग फीड करें":
         key=f"sl2_{m_id}_{judge}",
     )
     s3 = st.slider(
-        "3. प्रस्तुति / Viva (Max 5)",
+        "3. प्रस्तुतीकरण / Viva (Max 5)",
         0.0,
         5.0,
         v3,
@@ -480,50 +513,65 @@ if menu == "📝 मार्किंग फीड करें":
         key=f"sl3_{m_id}_{judge}",
     )
 
-    tot = s1 + s2 + s3
+    total_judge = s1 + s2 + s3
     st.markdown(
         f"<div style='text-align:center; font-size:1.2rem; margin:8px;"
-        f" font-weight:bold;'>आपका स्कोर: <span style='color:#16a34a;'>{tot} /"
-        " 15</span></div>",
+        f" font-weight:bold;'>प्राप्तांक: <span style='color:#16a34a;'>{total_judge}"
+        " / 15</span></div>",
         unsafe_allow_html=True,
     )
 
-    rem = st.text_input("टिप्पणी / Remarks (वैकल्पिक):", value=v_rem)
+    remarks = st.text_input("टिप्पणी / Remarks (वैकल्पिक):", value=v_rem)
 
-    if st.button("💾 अंक सुरक्षित करें (SAVE)", type="primary"):
-      c.execute(
-          """
-            INSERT INTO marks (model_id, judge_name, crit1, crit2, crit3, total, remarks)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(model_id, judge_name) 
-            DO UPDATE SET crit1=excluded.crit1, crit2=excluded.crit2, crit3=excluded.crit3, total=excluded.total, remarks=excluded.remarks
-            """,
-          (m_id, judge, s1, s2, s3, tot, rem),
+    if st.button("💾 Google Sheet में सुरक्षित करें (SAVE)", type="primary"):
+      # पुरानी एंट्री हटाएं ताकि डुप्लीकेट न हो
+      new_df = df_marks[
+          ~(
+              (df_marks["model_id"] == m_id)
+              & (df_marks["judge_name"] == judge)
+          )
+      ].copy()
+
+      new_row = pd.DataFrame([{
+          "model_id": int(m_id),
+          "judge_name": str(judge),
+          "crit1": float(s1),
+          "crit2": float(s2),
+          "crit3": float(s3),
+          "total": float(total_judge),
+          "remarks": str(remarks),
+      }])
+
+      updated_df = pd.concat([new_df, new_row], ignore_index=True)
+
+      # Google Sheet को सीधे अपडेट करें
+      conn.update(data=updated_df)
+      st.toast(
+          f"✅ {judge}: {total_judge}/15 Google Sheet में सुरक्षित हो गया!",
+          icon="🎉",
       )
-      conn.commit()
-      st.toast(f"✅ सुरक्षित हुआ! {judge}: {tot}/15 अंक", icon="🎉")
+      st.rerun()
 
-# ----------------- 2. रैंक व रिजल्ट स्क्रीन (Junior / Senior) -----------------
-elif menu == "🏆 Top 3 रैंक (Junior/Senior)":
-  st.markdown("#### 🏆 वर्गवार टॉप 3 परिणाम (Max 45 Marks)")
+# ----------------- 2. रैंक व रिजल्ट (Junior / Senior out of 45) -----------------
+elif menu == "🏆 Top 3 परिणाम (45 में से)":
+  st.markdown("#### 🏆 वर्गवार टॉप 3 रैंक (Total: 45 Marks)")
 
-  df_raw = pd.read_sql_query("SELECT * FROM marks", conn)
-
-  if df_raw.empty:
-    st.info(
-        "अभी तक किसी शिक्षक द्वारा नंबर दर्ज नहीं किए गए हैं। कृपया पहले अंक भरें।"
-    )
+  if df_marks.empty or "total" not in df_marks.columns:
+    st.info("अभी तक किसी जज द्वारा नंबर नहीं भरे गए हैं।")
   else:
-    pivoted = df_raw.pivot(
-        index="model_id", columns="judge_name", values="total"
+    # 3 जजों के कुल नंबर जोड़ना
+    df_clean = df_marks.dropna(subset=["model_id", "total"])
+    pivoted = df_clean.pivot_table(
+        index="model_id", columns="judge_name", values="total", aggfunc="first"
     ).reset_index()
+
     merged = pd.merge(df_base, pivoted, left_on="id", right_on="model_id", how="left")
 
     for j in ["Shree S.K. Nayak", "Shri B.N.R. Tripathi", "Shri S.N. Singh"]:
       if j not in merged.columns:
         merged[j] = 0.0
       else:
-        merged[j] = merged[j].fillna(0.0)
+        merged[j] = pd.to_numeric(merged[j], errors="coerce").fillna(0.0)
 
     merged["Total (out of 45)"] = (
         merged["Shree S.K. Nayak"]
@@ -531,42 +579,38 @@ elif menu == "🏆 Top 3 रैंक (Junior/Senior)":
         + merged["Shri S.N. Singh"]
     )
 
-    # फंक्शन: ग्रुप के हिसाब से टॉप 3 और मेरिट दिखाना
-    def show_group_results(group_name, title_emoji):
-      st.markdown(f"### {title_emoji} {group_name}")
+    def display_category_ranks(grp_title, grp_key, emoji):
+      st.markdown(f"### {emoji} {grp_title}")
       grp_df = (
           merged[
-              (merged["group"] == group_name)
-              & (merged["Total (out of 45)"] > 0)
+              (merged["group"] == grp_key) & (merged["Total (out of 45)"] > 0)
           ]
           .sort_values(by="Total (out of 45)", ascending=False)
           .reset_index(drop=True)
       )
 
       if grp_df.empty:
-        st.caption(f"{group_name} में अभी तक कोई अंक दर्ज नहीं हैं।")
+        st.caption("इस वर्ग में अभी तक कोई अंक दर्ज नहीं हुआ है।")
         return
 
       grp_df["Rank"] = grp_df["Total (out of 45)"].rank(
           ascending=False, method="min"
       ).astype(int)
 
-      # Top 3 Cards
       medals = ["🥇 1st Rank", "🥈 2nd Rank", "🥉 3rd Rank"]
-      for idx, row in grp_df.head(3).iterrows():
+      for idx, r in grp_df.head(3).iterrows():
         st.markdown(
             f"""
                 <div class="rank-card">
-                    <div style="font-size:1.1rem; font-weight:bold; color:#b45309;">{medals[idx]} — {row['Total (out of 45)']} / 45</div>
-                    <div style="font-size:1rem; font-weight:600;">{row['name']} (कक्षा: {row['class']})</div>
-                    <div style="font-size:0.85rem; color:#475569;">👥 {row['students']}</div>
+                    <div style="font-size:1.15rem; font-weight:bold; color:#b45309;">{medals[idx]} — {r['Total (out of 45)']:.1f} / 45</div>
+                    <div style="font-size:1rem; font-weight:600;">{r['name']} (कक्षा: {r['class']})</div>
+                    <div style="font-size:0.85rem; color:#475569;">👥 {r['students']}</div>
                 </div>
                 """,
             unsafe_allow_html=True,
         )
 
-      # संक्षिप्त टेबल
-      with st.expander(f"📋 {group_name} की पूरी मेरिट लिस्ट देखें"):
+      with st.expander(f"📋 {grp_title} की पूरी मेरिट लिस्ट देखें"):
         disp = grp_df[
             [
                 "Rank",
@@ -589,53 +633,63 @@ elif menu == "🏆 Top 3 रैंक (Junior/Senior)":
         )
         st.dataframe(disp, use_container_width=True, hide_index=True)
 
-    # 1. जूनियर वर्ग (6 से 8)
-    show_group_results("Junior (6 to 8)", "🌱 जूनियर वर्ग")
+    # जूनियर वर्ग (6 से 8)
+    display_category_ranks("जूनियर वर्ग (कक्षा 6 से 8)", "Junior (6 to 8)", "🌱")
     st.write("---")
-    # 2. सीनियर वर्ग (9 व 10)
-    show_group_results("Senior (9 to 10)", "🚀 सीनियर वर्ग")
+    # सीनियर वर्ग (9 व 10)
+    display_category_ranks("सीनियर वर्ग (कक्षा 9 व 10)", "Senior (9 to 10)", "🚀")
 
     st.write("---")
-    # सम्पूर्ण बैकअप CSV
-    csv_bytes = (
+    csv_data = (
         merged.sort_values(by="Total (out of 45)", ascending=False)
         .to_csv(index=False)
         .encode("utf-8-sig")
     )
     st.download_button(
-        "📥 पूरी फाइनल शीट (Excel/CSV) डाउनलोड करें",
-        data=csv_bytes,
-        file_name="Junior_Senior_Science_Results.csv",
+        "📥 पूरी मेरिट लिस्ट एक्सेल / CSV डाउनलोड करें",
+        data=csv_data,
+        file_name="Science_Exhibition_Final_Scores.csv",
         mime="text/csv",
     )
 
-# ----------------- 3. डेटा सुधार / डिलीट -----------------
+# ----------------- 3. सुधार व डिलीट स्क्रीन -----------------
 else:
-  st.markdown("#### 🗑️ गलत डेटा सुधारें / डिलीट करें")
-  st.caption(
-      "यदि किसी जज ने गलती से गलत नंबर भर दिया हो, तो यहाँ से हटाकर दोबारा सही नंबर दे सकते हैं।"
-  )
+  st.markdown("#### 🗑️ गलत प्रविष्टि डिलीट करें")
+  st.caption("यदि किसी जज से कोई गलत नंबर दर्ज हो गया हो, तो यहाँ से हटाएँ।")
 
-  df_all = pd.read_sql_query("SELECT * FROM marks", conn)
-
-  if df_all.empty:
-    st.info("डेटाबेस खाली है।")
+  if df_marks.empty:
+    st.info("Google Sheet में अभी कोई डेटा नहीं है।")
   else:
-    entry_opts = {}
-    for _, r in df_all.iterrows():
-      model_info = df_base[df_base["id"] == r["model_id"]].iloc[0]
-      label = f"#{r['model_id']} ({model_info['class']}) {model_info['name']} | जज: {r['judge_name']} | अंक: {r['total']}/15"
-      entry_opts[label] = (r["model_id"], r["judge_name"])
-
-    sel_entry = st.selectbox(
-        "हटाने के लिए प्रविष्टि चुनें:", list(entry_opts.keys())
-    )
-    del_id, del_j = entry_opts[sel_entry]
-
-    if st.button("🗑️ यह प्रविष्टि डिलीट करें", type="primary"):
-      c.execute(
-          "DELETE FROM marks WHERE model_id=? AND judge_name=?", (del_id, del_j)
+    entry_dict = {}
+    for _, r in df_marks.iterrows():
+      mid = int(r["model_id"])
+      matching_models = df_base[df_base["id"] == mid]
+      m_name = (
+          matching_models.iloc[0]["name"]
+          if not matching_models.empty
+          else "Model"
       )
-      conn.commit()
-      st.success(f"मॉडल #{del_id} के लिए {del_j} जी के अंक हटा दिए गए हैं।")
+      m_class = (
+          matching_models.iloc[0]["class"] if not matching_models.empty else ""
+      )
+      label = f"#{mid} ({m_class} - {m_name}) | जज: {r['judge_name']} | अंक: {r['total']}/15"
+      entry_dict[label] = (mid, str(r["judge_name"]))
+
+    sel_label = st.selectbox(
+        "हटाने के लिए मॉडल और जज चुनें:", list(entry_dict.keys())
+    )
+    del_mid, del_judge = entry_dict[sel_label]
+
+    if st.button("🗑️ Google Sheet से यह एंट्री हटाएं", type="primary"):
+      updated_df = df_marks[
+          ~(
+              (df_marks["model_id"] == del_mid)
+              & (df_marks["judge_name"] == del_judge)
+          )
+      ]
+      conn.update(data=updated_df)
+      st.success(
+          f"मॉडल #{del_mid} के लिए {del_judge} जी का स्कोर Google Sheet से हटा"
+          " दिया गया।"
+      )
       st.rerun()
