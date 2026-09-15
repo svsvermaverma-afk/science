@@ -1,49 +1,17 @@
+import os
 import sqlite3
 import pandas as pd
 import streamlit as st
 
-# Mobile viewport optimization
 st.set_page_config(
-    page_title="Science Model Marking",
+    page_title="Science Model Scoring & Management",
     page_icon="🔬",
-    layout="centered",
-    initial_sidebar_state="collapsed",
+    layout="wide",
 )
 
-# Mobile Custom CSS (Bade Touch Targets aur Clean Cards)
-st.markdown(
-    """
-    <style>
-        .block-container { padding: 1rem 0.8rem; }
-        .stButton>button {
-            width: 100%;
-            height: 3.2rem;
-            font-size: 1.1rem !important;
-            font-weight: bold;
-            border-radius: 10px;
-        }
-        .model-card {
-            background-color: #f0f4f8;
-            border-left: 5px solid #0066cc;
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 12px;
-            color: #1a1a1a;
-        }
-        .rank-card {
-            background-color: #fff9e6;
-            border: 1px solid #ffd700;
-            padding: 10px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-        }
-    </style>
-""",
-    unsafe_allow_html=True,
-)
-
-# ----------------- Database Setup -----------------
-conn = sqlite3.connect("competition_mobile.db", check_same_thread=False)
+# ----------------- स्थायी डेटाबेस सेटअप -----------------
+DB_FILE = "competition_permanent_data.db"
+conn = sqlite3.connect(DB_FILE, check_same_thread=False)
 c = conn.cursor()
 c.execute("""
 CREATE TABLE IF NOT EXISTS marks (
@@ -54,12 +22,13 @@ CREATE TABLE IF NOT EXISTS marks (
     crit3 REAL,
     total REAL,
     remarks TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (model_id, judge_name)
 )
 """)
 conn.commit()
 
-# ----------------- Competition Data -----------------
+# ----------------- शीट का डेटा (35 मॉडल्स) -----------------
 DATA = [
     {
         "id": 1,
@@ -427,106 +396,61 @@ DATA = [
 
 df_base = pd.DataFrame(DATA)
 
-# ----------------- App Header -----------------
-st.markdown("### 🔬 विज्ञान मॉडल मूल्यांकन")
-menu = st.radio(
-    "",
-    ["📝 मार्किंग फीड करें", "🏆 लाइव रैंक व रिजल्ट"],
-    horizontal=True,
-    label_visibility="collapsed",
+# ----------------- UI Tabs -----------------
+st.title("🔬 साइंस मॉडल अंकन एवं परिणाम पोर्टल")
+tab1, tab2, tab3 = st.tabs(
+    ["📝 अंक प्रविष्टि (Marking)", "📊 लाइव अंक शीट (Master Sheet)", "🗑️ डेटा प्रबंधन / डिलीट"]
 )
 
-# ----------------- 1. मार्किंग स्क्रीन (Mobile Optimized) -----------------
-if menu == "📝 मार्किंग फीड करें":
-  judge_name = st.selectbox(
-      "👤 शिक्षक (Judge Name):",
-      ["Shree S.K. Nayak", "Shri B.N.R. Tripathi", "Shri S.N. Singh"],
-  )
+# ----------------- TAB 1: अंक प्रविष्टि -----------------
+with tab1:
+  col_j, col_c = st.columns(2)
+  with col_j:
+    judge = st.selectbox(
+        "निर्णायक शिक्षक (Judge):",
+        ["Shree S.K. Nayak", "Shri B.N.R. Tripathi", "Shri S.N. Singh"],
+    )
+  with col_c:
+    classes = ["सभी कक्षाएं"] + sorted(list(df_base["class"].unique()))
+    sel_class = st.selectbox("कक्षा चुनें:", classes)
 
-  class_list = ["सभी कक्षाएं (All)"] + sorted(list(df_base["class"].unique()))
-  selected_class = st.selectbox("🏫 कक्षा चुनें:", class_list)
-
-  if selected_class != "सभी कक्षाएं (All)":
-    filtered_df = df_base[df_base["class"] == selected_class]
-  else:
-    filtered_df = df_base
-
-  model_options = {
+  f_df = df_base if sel_class == "सभी कक्षाएं" else df_base[df_base["class"] == sel_class]
+  model_opts = {
       f"#{r['id']} ({r['class']}) - {r['name']}": r["id"]
-      for _, r in filtered_df.iterrows()
+      for _, r in f_df.iterrows()
   }
 
-  if not model_options:
-    st.warning("कोई मॉडल उपलब्ध नहीं है।")
-  else:
-    selected_label = st.selectbox("📦 मॉडल चुनें:", list(model_options.keys()))
-    selected_id = model_options[selected_label]
-    model_row = df_base[df_base["id"] == selected_id].iloc[0]
+  if model_opts:
+    chosen_label = st.selectbox("मॉडल चुनें:", list(model_opts.keys()))
+    m_id = model_opts[chosen_label]
+    row = df_base[df_base["id"] == m_id].iloc[0]
 
-    # Student Card for Mobile
-    st.markdown(
-        f"""
-        <div class="model-card">
-            <div style="font-size: 1.1rem; font-weight: bold;">{model_row['name']}</div>
-            <div style="font-size: 0.85rem; color: #555;">कक्षा: <b>{model_row['class']}</b> | {model_row['type']}</div>
-            <div style="font-size: 0.85rem; margin-top: 5px;">👥 <b>विद्यार्थी:</b> {model_row['students']}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    st.info(
+        f"**मॉडल:** {row['name']} | **कक्षा:** {row['class']} | **विद्यार्थी:**"
+        f" {row['students']}"
     )
 
-    # Existing marks retrieval
+    # पहले का डेटा लोड करें
     c.execute(
         "SELECT crit1, crit2, crit3, remarks FROM marks WHERE model_id=? AND"
         " judge_name=?",
-        (selected_id, judge_name),
+        (m_id, judge),
     )
-    existing = c.fetchone()
-    init_c1 = float(existing[0]) if existing else 0.0
-    init_c2 = float(existing[1]) if existing else 0.0
-    init_c3 = float(existing[2]) if existing else 0.0
-    init_rem = existing[3] if existing else ""
-
-    st.markdown("**मार्क्स दर्ज करें (कुल 15 में से):**")
-
-    # Mobile-friendly sliders (Finger drag)
-    crit1 = st.slider(
-        "1. नवाचार / Creativity (0-5)",
-        0.0,
-        5.0,
-        init_c1,
-        0.5,
-        key=f"m1_{selected_id}_{judge_name}",
-    )
-    crit2 = st.slider(
-        "2. सिद्धांत / Working (0-5)",
-        0.0,
-        5.0,
-        init_c2,
-        0.5,
-        key=f"m2_{selected_id}_{judge_name}",
-    )
-    crit3 = st.slider(
-        "3. प्रस्तुति / Viva (0-5)",
-        0.0,
-        5.0,
-        init_c3,
-        0.5,
-        key=f"m3_{selected_id}_{judge_name}",
+    prev = c.fetchone()
+    v1, v2, v3, v_rem = (
+        (prev[0], prev[1], prev[2], prev[3]) if prev else (0.0, 0.0, 0.0, "")
     )
 
-    total_judge = crit1 + crit2 + crit3
+    c1, c2, c3 = st.columns(3)
+    s1 = c1.number_input("नवाचार (0-5)", 0.0, 5.0, float(v1), 0.5)
+    s2 = c2.number_input("सिद्धांत (0-5)", 0.0, 5.0, float(v2), 0.5)
+    s3 = c3.number_input("प्रस्तुति (0-5)", 0.0, 5.0, float(v3), 0.5)
+    rem = st.text_input("रिमार्क:", value=v_rem)
 
-    st.markdown(
-        f"<div style='text-align:center; font-size:1.2rem; margin:10px;"
-        f" font-weight:bold;'>आपका स्कोर: <span style='color:#008000;'>{total_judge}"
-        " / 15</span></div>",
-        unsafe_allow_html=True,
-    )
+    tot = s1 + s2 + s3
+    st.write(f"**प्राप्तांक:** `{tot} / 15`")
 
-    remarks = st.text_input("टिप्पणी / Remarks:", value=init_rem)
-
-    if st.button("💾 सुरक्षित करें (SAVE)", type="primary"):
+    if st.button("💾 अंक सुरक्षित करें (Save Score)", type="primary"):
       c.execute(
           """
             INSERT INTO marks (model_id, judge_name, crit1, crit2, crit3, total, remarks)
@@ -534,23 +458,58 @@ if menu == "📝 मार्किंग फीड करें":
             ON CONFLICT(model_id, judge_name) 
             DO UPDATE SET crit1=excluded.crit1, crit2=excluded.crit2, crit3=excluded.crit3, total=excluded.total, remarks=excluded.remarks
             """,
-          (selected_id, judge_name, crit1, crit2, crit3, total_judge, remarks),
+          (m_id, judge, s1, s2, s3, tot, rem),
       )
       conn.commit()
-      st.toast(
-          f"✅ सुरक्षित हुआ! {judge_name}: {total_judge}/15", icon="🎉"
+      st.success(
+          f"✅ {judge} जी द्वारा मॉडल #{m_id} के {tot}/15 अंक सुरक्षित कर लिए"
+          " गए।"
       )
 
-# ----------------- 2. लाइव रैंक स्क्रीन -----------------
-else:
-  st.markdown("#### 🏆 45 में से लाइव मेरिट सूची")
+# ----------------- TAB 2: लाइव मास्टर शीट -----------------
+with tab2:
+  st.subheader("📋 सभी मॉडल्स की विस्तृत अंक शीट")
 
-  df_scores = pd.read_sql_query("SELECT * FROM marks", conn)
+  df_raw = pd.read_sql_query("SELECT * FROM marks", conn)
 
-  if df_scores.empty:
-    st.info("अभी तक कोई अंक दर्ज नहीं किए गए हैं।")
+  if df_raw.empty:
+    st.warning("अभी तक कोई डेटा दर्ज नहीं हुआ है।")
   else:
-    pivoted = df_scores.pivot(
+    # डिटेल्ड शीट: किस मॉडल को किस जज ने क्या-क्या नंबर दिए
+    detail_df = pd.merge(
+        df_raw, df_base, left_on="model_id", right_on="id", how="left"
+    )
+    detail_cols = [
+        "model_id",
+        "class",
+        "name",
+        "judge_name",
+        "crit1",
+        "crit2",
+        "crit3",
+        "total",
+        "students",
+    ]
+    renamed_detail = detail_df[detail_cols].rename(
+        columns={
+            "model_id": "क्र. सं.",
+            "class": "कक्षा",
+            "name": "मॉडल का नाम",
+            "judge_name": "जज शिक्षक",
+            "crit1": "नवाचार (/5)",
+            "crit2": "सिद्धांत (/5)",
+            "crit3": "प्रस्तुति (/5)",
+            "total": "कुल अंक (/15)",
+            "students": "विद्यार्थी",
+        }
+    )
+
+    st.dataframe(renamed_detail, use_container_width=True)
+
+    # 45 में से रैंक और मेरिट समरी
+    st.divider()
+    st.subheader("🏆 फाइनल 45 में से मेरिट व रैंक")
+    pivoted = df_raw.pivot(
         index="model_id", columns="judge_name", values="total"
     ).reset_index()
     merged = pd.merge(df_base, pivoted, left_on="id", right_on="model_id", how="left")
@@ -561,55 +520,82 @@ else:
       else:
         merged[j] = merged[j].fillna(0.0)
 
-    merged["Total"] = (
+    merged["कुल अंक (45)"] = (
         merged["Shree S.K. Nayak"]
         + merged["Shri B.N.R. Tripathi"]
         + merged["Shri S.N. Singh"]
     )
-
-    ranked_df = (
-        merged[merged["Total"] > 0]
-        .sort_values(by="Total", ascending=False)
+    summary_df = (
+        merged[merged["कुल अंक (45)"] > 0]
+        .sort_values(by="कुल अंक (45)", ascending=False)
         .reset_index(drop=True)
     )
-    ranked_df["Rank"] = ranked_df["Total"].rank(
+    summary_df["रैंक"] = summary_df["कुल अंक (45)"].rank(
         ascending=False, method="min"
     ).astype(int)
 
-    # Top 3 Card View for Mobile
-    st.markdown("**शीर्ष 3 विजेता:**")
-    medals = ["🥇 1st Rank", "🥈 2nd Rank", "🥉 3rd Rank"]
-    for idx, row in ranked_df.head(3).iterrows():
-      st.markdown(
-          f"""
-            <div class="rank-card">
-                <b>{medals[idx]}</b>: <span style="font-size:1.1rem; color:#b8860b;">{row['Total']} / 45</span><br>
-                <b>{row['name']}</b> (कक्षा: {row['class']})<br>
-                <small>👥 {row['students']}</small>
-            </div>
-            """,
-          unsafe_allow_html=True,
-      )
+    rank_cols = [
+        "रैंक",
+        "id",
+        "class",
+        "name",
+        "Shree S.K. Nayak",
+        "Shri B.N.R. Tripathi",
+        "Shri S.N. Singh",
+        "कुल अंक (45)",
+    ]
+    st.dataframe(summary_df[rank_cols], use_container_width=True)
 
-    st.markdown("---")
-    st.markdown("**सम्पूर्ण स्कोरशीट:**")
-
-    display_df = ranked_df[
-        ["Rank", "class", "name", "Total"]
-    ].rename(
-        columns={
-            "class": "कक्षा",
-            "name": "मॉडल",
-            "Total": "कुल अंक (/45)",
-        }
-    )
-
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
-
-    csv_data = ranked_df.to_csv(index=False).encode("utf-8-sig")
+    # डाउनलोड बटन
+    csv_bytes = summary_df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
-        "📥 रिजल्ट CSV डाउनलोड करें",
-        data=csv_data,
-        file_name="Science_Competition_Results.csv",
+        "📥 पूरी मेरिट शीट डाउनलोड करें (.csv)",
+        data=csv_bytes,
+        file_name="Final_Science_Scoring_Sheet.csv",
         mime="text/csv",
     )
+
+# ----------------- TAB 3: डेटा डिलीट व सुधार -----------------
+with tab3:
+  st.subheader("⚠️ गलत डेटा डिलीट या रीसेट करें")
+  st.caption("यदि किसी जज से गलत नंबर चढ़ गया हो, तो यहाँ से सीधे उस प्रविष्टि को हटाया जा सकता है।")
+
+  df_all = pd.read_sql_query("SELECT * FROM marks", conn)
+
+  if df_all.empty:
+    st.info("डेटाबेस अभी खाली है, डिलीट करने के लिए कोई प्रविष्टि नहीं है।")
+  else:
+    # ड्रॉपडाउन में दिखाने के लिए लिस्ट बनाएं
+    entry_options = {}
+    for _, r in df_all.iterrows():
+      model_info = df_base[df_base["id"] == r["model_id"]].iloc[0]
+      label = f"मॉडल #{r['model_id']} ({model_info['class']} - {model_info['name']}) | जज: {r['judge_name']} | अंक: {r['total']}/15"
+      entry_options[label] = (r["model_id"], r["judge_name"])
+
+    selected_entry = st.selectbox("डिलीट करने के लिए प्रविष्टि चुनें:", list(entry_options.keys()))
+    del_mid, del_judge = entry_options[selected_entry]
+
+    col_del1, col_del2 = st.columns([1, 2])
+    with col_del1:
+      if st.button("🗑️ चुनी हुई प्रविष्टि डिलीट करें", type="primary"):
+        c.execute(
+            "DELETE FROM marks WHERE model_id=? AND judge_name=?",
+            (del_mid, del_judge),
+        )
+        conn.commit()
+        st.warning(f"मॉडल #{del_mid} का {del_judge} जी का स्कोर हटा दिया गया है।")
+        st.rerun()
+
+    st.write("---")
+    # पूरा डेटाबेस खाली करने का विकल्प (सुरक्षित पासवर्ड के साथ)
+    with st.expander("🚨 पूरा डेटा रीसेट करें (Danger Zone)"):
+      st.error("यह सभी जजों के सभी नंबर डिलीट कर देगा!")
+      passcode = st.text_input("पुष्टि के लिए कोड लिखें ('CLEAR'):")
+      if st.button("पूरा डेटाबेस खाली करें"):
+        if passcode == "CLEAR":
+          c.execute("DELETE FROM marks")
+          conn.commit()
+          st.success("पूरा डेटाबेस रीसेट हो गया है।")
+          st.rerun()
+        else:
+          st.error("गलत कोड! प्रविष्टियां सुरक्षित हैं।")
