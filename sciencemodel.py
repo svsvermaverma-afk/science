@@ -407,7 +407,7 @@ menu = st.radio(
 if menu == "📝 मार्किंग फीड करें":
   judge = st.selectbox(
       "👤 निर्णायक शिक्षक (Judge):",
-      ["Shree S.K. Nayak", "Shri B.N.R. Tripathi", "Shri S.N. Singh"],
+      ["Shri S.K. Nayak", "Shri B.N.R. Tripathi", "Shri S.N. Singh"],
   )
 
   class_list = ["सभी कक्षाएं (All)"] + sorted(list(df_base["class"].unique()))
